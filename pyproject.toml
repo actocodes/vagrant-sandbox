@@ -1,0 +1,45 @@
+[build-system]
+requires = ["setuptools>=77.0.3"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "vagrant-sandbox"
+version = "0.1.0"
+description = "Generate and provision isolated Vagrant development environments"
+readme = "README.md"
+requires-python = ">=3.11"
+license = "MIT"
+license-files = ["LICENSE"]
+authors = [{ name = "vagrant-sandbox" }]
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Environment :: Console",
+  "Intended Audience :: Developers",
+  "Operating System :: OS Independent",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
+  "Programming Language :: Python :: 3.14",
+  "Topic :: System :: Systems Administration",
+  "Topic :: Utilities",
+]
+
+[project.urls]
+Homepage = "https://github.com/actocodes/vagrant-sandbox"
+Repository = "https://github.com/actocodes/vagrant-sandbox"
+Issues = "https://github.com/actocodes/vagrant-sandbox/issues"
+Changelog = "https://github.com/actocodes/vagrant-sandbox/releases"
+
+[project.scripts]
+vagrant-sandbox = "vagrant_sandbox.cli:main"
+
+[tool.setuptools]
+package-dir = { "" = "src" }
+include-package-data = true
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+vagrant_sandbox = ["templates/*", "profiles/*.sh"]
