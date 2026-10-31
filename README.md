@@ -10,7 +10,7 @@
 
 ## Install and run
 
-After the first release is published to PyPI, install the command with `pipx`:
+Install the command with `pipx`:
 
 ```console
 pipx install vagrant-sandbox
@@ -65,37 +65,6 @@ vagrant-sandbox create --profile python --profile docker --provision ./scripts/e
 vagrant-sandbox profiles
 ```
 
-Supported profiles are `base`, `docker`, `nodejs`, and `python`. The `base` profile is always included. `--profile` can be repeated to choose profiles; when omitted, config profiles are used, then the default `base`.
+Supported profiles are `base`, `docker`, `nodejs`, and `python`. The `base` profile is always included. `--profile` can be repeated to choose profiles, when omitted, config profiles are used, then the default `base`.
 
 The generated VM does not share the project directory with the host and disables SSH agent forwarding. It uses a host-only private network and does not forward application ports to localhost. Run `vagrant destroy` from the generated project directory to remove the VM.
-
-## Build and publish
-
-Before the first release, create the public repository at
-[github.com/actocodes/vagrant-sandbox](https://github.com/actocodes/vagrant-sandbox), push the reviewed source, and configure a PyPI project or trusted publisher for that GitHub repository. The PyPI project name must still be available when you publish.
-
-The GitHub Actions workflow runs tests and checks built distributions; it does not publish them. Trusted publishing requires a separate release workflow configured for the PyPI trusted publisher. Alternatively, upload the checked distributions with Twine using a PyPI API token kept outside the repository.
-
-Build and validate the release artifacts locally:
-
-```console
-python -m pip install --upgrade build twine
-python -m unittest discover -s tests -v
-python -m build
-python -m twine check dist/*
-```
-
-Upload the checked artifacts with Twine:
-
-```console
-python -m twine upload dist/*
-```
-
-After publication, verify the published install in a clean environment:
-
-```console
-pipx install vagrant-sandbox
-vagrant-sandbox --help
-```
-
-Do not commit credentials or upload credentials to source control. Configure PyPI trusted publishing where possible; otherwise use a PyPI API token stored outside the repository.

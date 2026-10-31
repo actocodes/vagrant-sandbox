@@ -3,13 +3,6 @@ set -euo pipefail
 
 mkdir -p "$HOME/workspace"
 if ! grep -Fq "alias ll=" "$HOME/.bashrc"; then
-  cat >> "$HOME/.bashrc" <<'EOF'
-
-# --- dev sandbox ---
-alias ll='ls -alF'
-alias gs='git status'
-cd ~/workspace 2>/dev/null || true
-EOF
+  printf "\n# --- dev sandbox ---\nalias ll='ls -alF'\nalias gs='git status'\ncd ~/workspace 2>/dev/null || true\n" >> "$HOME/.bashrc"
 fi
 git config --global init.defaultBranch main
-
