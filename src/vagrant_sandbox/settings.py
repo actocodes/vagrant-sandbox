@@ -8,7 +8,7 @@ from typing import Any, Callable
 
 DEFAULTS: dict[str, Any] = {
     "vm_name": "sandbox",
-    "vm_ip": "192.168.56.10",
+    "vm_ip": "192.168.56.10",  # NOSONAR
     "cpus": 2,
     "memory": 2048,
     "box": "bento/ubuntu-24.04",
@@ -20,7 +20,11 @@ ALLOWED_CONFIG_KEYS = frozenset(DEFAULTS)
 AVAILABLE_PROFILES = ("base", "docker", "nodejs", "python")
 PRIVATE_NETWORKS = tuple(
     ipaddress.ip_network(network)
-    for network in ("10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16")
+    for network in (
+        "10.0.0.0/8",  # NOSONAR
+        "172.16.0.0/12",  # NOSONAR
+        "192.168.0.0/16",  # NOSONAR
+    )
 )
 
 
@@ -66,64 +70,113 @@ def resolve_settings(
     interactive: bool = False,
     input_fn: Callable[[str], str] = input,
 ) -> Settings:
-    values = {**DEFAULTS, **config}
-    for key, value in cli.items():
-        if value is not None:
-            if key == "custom_scripts":
-                values[key] = [*values["custom_scripts"], *value]
-            else:
-                values[key] = value
-
+    values = _merge_settings(config, cli)
     if interactive:
-        prompts = (
-            ("vm_name", "VM name"),
-            ("vm_ip", "Private IPv4 address"),
-            ("cpus", "CPU cores"),
-            ("memory", "Memory in MB"),
-            ("box", "Vagrant box"),
-            ("provider", "Provider (blank for Vagrant default)"),
-            ("profiles", "Provisioning profiles (comma-separated)"),
-            ("custom_scripts", "Custom shell scripts (comma-separated paths)"),
-        )
-        for key, label in prompts:
-            if cli.get(key) is not None:
-                continue
-            current = values[key]
-            if key in ("profiles", "custom_scripts"):
-                shown = ", ".join(str(item) for item in current)
-            else:
-                shown = "" if current is None else str(current)
-            answer = input_fn(f"{label} [{shown}]: ").strip()
-            if not answer:
-                if key == "provider":
-                    values[key] = None
-                continue
-            if key in ("profiles", "custom_scripts"):
-                items = [item.strip() for item in answer.split(",") if item.strip()]
-                values[key] = items if key == "profiles" else [
-                    Path(item).expanduser().resolve() for item in items
-                ]
-            elif key in ("cpus", "memory"):
-                try:
-                    values[key] = int(answer)
-                except ValueError as error:
-                    raise ValueError(f"{label} must be an integer.") from error
-            else:
-                values[key] = answer or None
-
+        _apply_interactive_values(values, cli, input_fn)
     return validate_settings(values)
 
 
+def _merge_settings(config: dict[str, Any], cli: dict[str, Any]) -> dict[str, Any]:
+    values = {**DEFAULTS, **config}
+    for key, value in cli.items():
+        if value is None:
+            continue
+        if key == "custom_scripts":
+            values[key] = [*values["custom_scripts"], *value]
+        else:
+            values[key] = value
+    return values
+
+
+PROMPTS = (
+    ("vm_name", "VM name"),
+    ("vm_ip", "Private IPv4 address"),
+    ("cpus", "CPU cores"),
+    ("memory", "Memory in MB"),
+    ("box", "Vagrant box"),
+    ("provider", "Provider (blank for Vagrant default)"),
+    ("profiles", "Provisioning profiles (comma-separated)"),
+    ("custom_scripts", "Custom shell scripts (comma-separated paths)"),
+)
+
+
+def _apply_interactive_values(
+    values: dict[str, Any],
+    cli: dict[str, Any],
+    input_fn: Callable[[str], str],
+) -> None:
+    for key, label in PROMPTS:
+        if cli.get(key) is not None:
+            continue
+        answer = input_fn(f"{label} [{_display_value(key, values[key])}]: ").strip()
+        _apply_prompt_answer(values, key, label, answer)
+
+
+def _display_value(key: str, current: Any) -> str:
+    if key in ("profiles", "custom_scripts"):
+        return ", ".join(str(item) for item in current)
+    return "" if current is None else str(current)
+
+
+def _apply_prompt_answer(
+    values: dict[str, Any],
+    key: str,
+    label: str,
+    answer: str,
+) -> None:
+    if not answer:
+        if key == "provider":
+            values[key] = None
+        return
+    if key in ("profiles", "custom_scripts"):
+        items = [item.strip() for item in answer.split(",") if item.strip()]
+        values[key] = _parse_path_items(items) if key == "custom_scripts" else items
+    elif key in ("cpus", "memory"):
+        try:
+            values[key] = int(answer)
+        except ValueError as error:
+            raise ValueError(f"{label} must be an integer.") from error
+    else:
+        values[key] = answer
+
+
+def _parse_path_items(items: list[str]) -> list[Path]:
+    return [Path(item).expanduser().resolve() for item in items]
+
+
 def validate_settings(values: dict[str, Any]) -> Settings:
-    vm_name = values["vm_name"]
+    vm_name = _validate_vm_name(values["vm_name"])
+    ip = _validate_vm_ip(values["vm_ip"])
+    cpus = _bounded_integer(values["cpus"], "CPU count", 1, 256)
+    memory = _bounded_integer(values["memory"], "Memory", 512, 1_048_576)
+    box = _validate_box(values["box"])
+    provider = _validate_provider(values["provider"])
+    profiles = _validate_profiles(values["profiles"])
+    scripts = _validate_custom_scripts(values["custom_scripts"])
+
+    return Settings(
+        vm_name=vm_name,
+        vm_ip=str(ip),
+        cpus=cpus,
+        memory=memory,
+        box=box,
+        provider=provider,
+        profiles=profiles,
+        custom_scripts=scripts,
+    )
+
+
+def _validate_vm_name(vm_name: Any) -> str:
     if not isinstance(vm_name, str) or not re.fullmatch(
         r"[A-Za-z0-9][A-Za-z0-9_-]{0,62}", vm_name
     ):
         raise ValueError(
             "VM name must be 1-63 letters, digits, hyphens, or underscores and start with a letter or digit."
         )
+    return vm_name
 
-    vm_ip = values["vm_ip"]
+
+def _validate_vm_ip(vm_ip: Any) -> ipaddress.IPv4Address:
     if not isinstance(vm_ip, str):
         raise ValueError("VM IP must be a valid private IPv4 address.")
     try:
@@ -136,20 +189,24 @@ def validate_settings(values: dict[str, Any]) -> Settings:
         raise ValueError(
             "VM IP must belong to a private IPv4 range (10/8, 172.16/12, or 192.168/16)."
         )
+    return ip
 
-    cpus = _bounded_integer(values["cpus"], "CPU count", 1, 256)
-    memory = _bounded_integer(values["memory"], "Memory", 512, 1_048_576)
-    box = values["box"]
+
+def _validate_box(box: Any) -> str:
     if not isinstance(box, str) or not box.strip() or any(char in box for char in "\r\n"):
         raise ValueError("Vagrant box must be a non-empty single-line string.")
+    return box.strip()
 
-    provider = values["provider"]
+
+def _validate_provider(provider: Any) -> str | None:
     if provider is not None and (
         not isinstance(provider, str) or not re.fullmatch(r"[A-Za-z0-9_-]+", provider)
     ):
         raise ValueError("Provider must contain only letters, digits, hyphens, or underscores.")
+    return provider
 
-    profiles_value = values["profiles"]
+
+def _validate_profiles(profiles_value: Any) -> tuple[str, ...]:
     if not isinstance(profiles_value, (list, tuple)) or not all(
         isinstance(item, str) for item in profiles_value
     ):
@@ -162,8 +219,10 @@ def validate_settings(values: dict[str, Any]) -> Settings:
         profiles = ["base"]
     if "base" not in profiles:
         profiles.insert(0, "base")
+    return tuple(profiles)
 
-    scripts_value = values["custom_scripts"]
+
+def _validate_custom_scripts(scripts_value: Any) -> tuple[Path, ...]:
     if not isinstance(scripts_value, (list, tuple)):
         raise ValueError("'custom_scripts' must be a list of file paths.")
     scripts: list[Path] = []
@@ -174,17 +233,7 @@ def validate_settings(values: dict[str, Any]) -> Settings:
         if not path.is_file():
             raise ValueError(f"Custom provisioning script does not exist: {path}")
         scripts.append(path)
-
-    return Settings(
-        vm_name=vm_name,
-        vm_ip=str(ip),
-        cpus=cpus,
-        memory=memory,
-        box=box.strip(),
-        provider=provider,
-        profiles=tuple(profiles),
-        custom_scripts=tuple(scripts),
-    )
+    return tuple(scripts)
 
 
 def _bounded_integer(value: Any, label: str, minimum: int, maximum: int) -> int:

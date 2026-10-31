@@ -10,6 +10,7 @@ PACKAGE_DIR = Path(__file__).parent
 TEMPLATE_PATH = PACKAGE_DIR / "templates" / "Vagrantfile.template"
 PROFILES_DIR = PACKAGE_DIR / "profiles"
 PROVISION_DIR = Path(".vagrant-sandbox") / "provision"
+USER_SETUP_SCRIPT = "user-setup.sh"
 
 
 def render_vagrantfile(settings: Settings) -> str:
@@ -20,7 +21,7 @@ def render_vagrantfile(settings: Settings) -> str:
     blocks.append(
         _provision_block(
             "user-setup",
-            PROVISION_DIR / "user-setup.sh",
+            PROVISION_DIR / USER_SETUP_SCRIPT,
             privileged=False,
         )
     )
@@ -53,7 +54,7 @@ def generate_project(settings: Settings, output_dir: Path, force: bool = False) 
     generated_paths.extend(
         provision_dir / f"{profile}.sh" for profile in settings.profiles
     )
-    generated_paths.append(provision_dir / "user-setup.sh")
+    generated_paths.append(provision_dir / USER_SETUP_SCRIPT)
     generated_paths.extend(
         provision_dir / f"custom-{index + 1}-{script.name}"
         for index, script in enumerate(settings.custom_scripts)
@@ -69,7 +70,10 @@ def generate_project(settings: Settings, output_dir: Path, force: bool = False) 
     for profile in settings.profiles:
         source = PROFILES_DIR / f"{profile}.sh"
         shutil.copyfile(source, provision_dir / f"{profile}.sh")
-    shutil.copyfile(PROFILES_DIR / "user-setup.sh", provision_dir / "user-setup.sh")
+    shutil.copyfile(
+        PROFILES_DIR / USER_SETUP_SCRIPT,
+        provision_dir / USER_SETUP_SCRIPT,
+    )
     for index, script in enumerate(settings.custom_scripts):
         shutil.copyfile(script, provision_dir / f"custom-{index + 1}-{script.name}")
     vagrantfile.write_text(render_vagrantfile(settings), encoding="utf-8", newline="\n")

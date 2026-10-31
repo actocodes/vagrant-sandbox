@@ -88,7 +88,7 @@ def main(argv: list[str] | None = None) -> int:
         if result:
             print(f"vagrant up failed with exit code {result}.", file=sys.stderr)
         return result
-    except (ValueError, FileExistsError, OSError, RuntimeError) as error:
+    except (ValueError, OSError, RuntimeError) as error:
         print(f"Error: {error}", file=sys.stderr)
         return 1
 
