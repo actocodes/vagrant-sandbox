@@ -18,6 +18,11 @@ class GeneratorTests(unittest.TestCase):
         self.assertIn('name: "user-setup"', content)
         self.assertIn("privileged: false", content)
         self.assertIn('VM_NAME = "testbox"', content)
+        self.assertIn("config.trigger.after :up, :reload do |trigger|", content)
+        self.assertIn("ssh_info = machine.ssh_info", content)
+        self.assertIn('host_alias = "sandbox-#{VM_NAME}"', content)
+        self.assertIn('File.expand_path("~/.ssh/config")', content)
+        self.assertIn('config.vm.network "private_network", ip: VM_IP', content)
 
     def test_generation_refuses_to_replace_without_force(self):
         settings = resolve_settings({}, {})

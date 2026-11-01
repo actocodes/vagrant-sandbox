@@ -9,16 +9,14 @@ sharing your host project directory with the guest.
 ## Requirements
 
 - Python 3.11 or newer
-- [Vagrant](https://developer.hashicorp.com/vagrant/install) installed and
-  available on `PATH`
+- [Vagrant](https://developer.hashicorp.com/vagrant/install) installed and available on `PATH`
+- A Vagrant version with built-in trigger support
 - A Vagrant provider installed and usable by Vagrant:
   - VirtualBox (`virtualbox`)
   - VMware (`vmware_desktop`)
   - Parallels (`parallels`)
 
-Vagrant and its providers are installed separately, installing this Python
-package does not install them. The selected box must support the provider you
-intend to use.
+Vagrant and its providers are installed separately, installing this Python package does not install them. The selected box must support the provider you intend to use.
 
 ## Install
 
@@ -50,15 +48,14 @@ From the directory where you want the generated Vagrant project:
 vagrant-sandbox create
 ```
 
-In an interactive terminal, the command prompts for VM settings. Accept the
-displayed defaults by pressing Enter. It writes:
+In an interactive terminal, the command prompts for VM settings. Accept the displayed defaults by pressing Enter. It writes:
 
 - `Vagrantfile`
 - `.vagrant-sandbox/provision/` with the selected built-in and custom scripts
 
-It then runs `vagrant up` unless `--no-up` is specified. After the machine is
-running, connect with `vagrant ssh`. The default setup creates `~/workspace`
-inside the guest, clone your repositories there.
+It then runs `vagrant up` unless `--no-up` is specified. After the machine is running, connect with `vagrant ssh`. The default setup creates `~/workspace` inside the guest, clone your repositories there.
+
+After `vagrant up` or `vagrant reload`, the generated Vagrantfile updates a managed `sandbox-<VM_NAME>` host block at the beginning of your user SSH config using Vagrant's current SSH connection details. To connect VS Code, install the Remote - SSH extension and connect to that host alias. For the default VM name, the alias is `sandbox-sandbox`. The trigger changes only its own marked block and preserves the rest of `~/.ssh/config`.
 
 ## Commands
 
