@@ -2,5 +2,7 @@
 set -euo pipefail
 export DEBIAN_FRONTEND=noninteractive
 
-apt-get install -y python3 python3-pip python3-venv
+apt-get install -y python3 python3-pip python3-venv pipx
 
+runuser -u vagrant -- pipx install uv
+runuser -u vagrant -- pipx ensurepath

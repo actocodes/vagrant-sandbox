@@ -57,7 +57,7 @@ def main(argv: list[str] | None = None) -> int:
         print("  base    Common CLI tools, build essentials, Git, and workspace setup")
         print("  docker  Docker Engine")
         print("  nodejs  Node.js LTS")
-        print("  python  Python 3, pip, and venv")
+        print("  python  Python 3, pip, venv, pipx, uv, and uvx")
         return 0
 
     try:

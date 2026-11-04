@@ -179,7 +179,7 @@ scripts.
 | `base` | Build tools, Git, curl/wget, common command-line utilities, UTC timezone, and base packages. |
 | `docker` | Docker Engine inside the guest and adds the `vagrant` user to the `docker` group. This is not a Docker Vagrant provider. |
 | `nodejs` | Node.js LTS. |
-| `python` | Python 3, pip, and venv. |
+| `python` | Python 3, pip, venv, pipx, uv, and uvx. |
 
 Select one or combine profiles:
 
