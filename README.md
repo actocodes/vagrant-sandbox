@@ -208,6 +208,13 @@ is not shared with the guest, and SSH agent and X11 forwarding are disabled.
 Clone code inside `~/workspace` in the guest rather than expecting host files
 to appear there.
 
+After the VM starts, Vagrant adds its configured name and private IP to the
+host's hosts file so the VM can be reached by name. This requires administrator
+approval on Windows or `sudo` access on Linux/macOS. The entry is updated on
+subsequent starts and removed by `vagrant destroy`; unrelated hosts-file
+content is preserved. If the name already has an unmanaged hosts entry,
+Vagrant reports a conflict rather than changing it.
+
 ## Existing generated files and lifecycle
 
 The tool refuses to overwrite a generated `Vagrantfile` or selected

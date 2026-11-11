@@ -22,6 +22,11 @@ class GeneratorTests(unittest.TestCase):
         self.assertIn("ssh_info = machine.ssh_info", content)
         self.assertIn('host_alias = "sandbox-#{VM_NAME}"', content)
         self.assertIn('File.expand_path("~/.ssh/config")', content)
+        self.assertIn('vagrant_sandbox_update_hosts("add")', content)
+        self.assertIn('vagrant_sandbox_update_hosts("remove")', content)
+        self.assertIn('$path = Join-Path $env:SystemRoot "System32\\\\drivers\\\\etc\\\\hosts"', content)
+        self.assertIn('hosts_path = "/etc/hosts"', content)
+        self.assertIn("Start-Process -FilePath \"powershell.exe\" -Verb RunAs", content)
         self.assertIn('config.vm.network "private_network", ip: VM_IP', content)
 
     def test_generation_refuses_to_replace_without_force(self):
