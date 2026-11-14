@@ -56,7 +56,7 @@ def main(argv: list[str] | None = None) -> int:
         print("Available profiles:")
         print("  base    Common CLI tools, build essentials, Git, and workspace setup")
         print("  docker  Docker Engine")
-        print("  nodejs  Node.js LTS")
+        print("  nodejs  Node.js LTS and pnpm")
         print("  python  Python 3, pip, venv, pipx, uv, and uvx")
         return 0
 

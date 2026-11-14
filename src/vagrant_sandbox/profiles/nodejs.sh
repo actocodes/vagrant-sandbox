@@ -7,3 +7,7 @@ if ! command -v node >/dev/null 2>&1; then
   apt-get install -y nodejs
 fi
 
+if ! command -v pnpm >/dev/null 2>&1; then
+  npm install --global pnpm
+fi
+
