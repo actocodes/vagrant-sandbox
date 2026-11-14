@@ -1,6 +1,9 @@
 import json
+import os
+import platform
 import shutil
 import subprocess
+import sys
 from pathlib import Path
 
 from .settings import Settings
@@ -81,9 +84,19 @@ def generate_project(settings: Settings, output_dir: Path, force: bool = False) 
 
 
 def start_vm(settings: Settings, output_dir: Path) -> int:
+    provider = settings.provider
+    if settings.provider_auto and provider == "libvirt":
+        provider = _linux_provider()
+    if provider == "hyperv" and os.name == "nt" and not _is_windows_admin():
+        raise RuntimeError(
+            "The Hyper-V provider requires an elevated Administrator shell. "
+            "Open PowerShell as Administrator and run vagrant-sandbox again."
+        )
+    if _is_linux():
+        _ensure_no_conflicting_linux_guests(provider)
+
     command = ["vagrant", "up"]
-    if settings.provider:
-        command.extend(["--provider", settings.provider])
+    command.extend(["--provider", provider])
     try:
         result = subprocess.run(command, cwd=output_dir, check=False)
     except FileNotFoundError as error:
@@ -91,6 +104,118 @@ def start_vm(settings: Settings, output_dir: Path) -> int:
             "Vagrant was not found. Install Vagrant and ensure it is on PATH."
         ) from error
     return result.returncode
+
+
+def _linux_provider() -> str:
+    try:
+        plugins = subprocess.run(
+            ["vagrant", "plugin", "list"],
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+    except FileNotFoundError as error:
+        raise RuntimeError(
+            "Vagrant was not found. Install Vagrant and ensure it is on PATH."
+        ) from error
+    except subprocess.TimeoutExpired as error:
+        raise RuntimeError("Timed out checking installed Vagrant providers.") from error
+    has_libvirt_plugin = (
+        plugins.returncode == 0 and "vagrant-libvirt" in plugins.stdout
+    )
+    has_libvirt_group = False
+    if (
+        hasattr(os, "geteuid")
+        and hasattr(os, "getgid")
+        and hasattr(os, "getgroups")
+    ):
+        try:
+            import grp
+
+            libvirt_gid = grp.getgrnam("libvirt").gr_gid
+            has_libvirt_group = (
+                os.geteuid() == 0
+                or libvirt_gid == os.getgid()
+                or libvirt_gid in os.getgroups()
+            )
+        except (AttributeError, KeyError, OSError):
+            pass
+    if (
+        has_libvirt_plugin
+        and shutil.which("virsh")
+        and Path("/dev/kvm").exists()
+        and has_libvirt_group
+    ):
+        return "libvirt"
+    if shutil.which("VBoxManage"):
+        print(
+            "Warning: libvirt is not ready; using the VirtualBox fallback.",
+            file=sys.stderr,
+        )
+        return "virtualbox"
+    raise RuntimeError(
+        "No usable Linux provider was found. Install Vagrant with the "
+        "vagrant-libvirt plugin, QEMU/KVM, and libvirt group access, or install "
+        "VirtualBox as a fallback."
+    )
+
+
+def _is_windows_admin() -> bool:
+    try:
+        import ctypes
+
+        return bool(ctypes.windll.shell32.IsUserAnAdmin())
+    except (AttributeError, OSError):
+        return False
+
+
+def _is_linux() -> bool:
+    return platform.system() == "Linux"
+
+
+def _ensure_no_conflicting_linux_guests(provider: str) -> None:
+    checks: list[tuple[str, list[str]]] = []
+    if provider == "libvirt" and shutil.which("VBoxManage"):
+        checks.append(("VirtualBox", ["VBoxManage", "list", "runningvms"]))
+    elif provider == "virtualbox" and shutil.which("virsh"):
+        for uri in ("qemu:///system", "qemu:///session"):
+            checks.append(
+                (f"KVM/libvirt ({uri})", ["virsh", "-c", uri, "list", "--name"])
+            )
+    for conflicting_provider, command in checks:
+        _check_conflicting_linux_guests(conflicting_provider, command, provider)
+
+
+def _check_conflicting_linux_guests(
+    conflicting_provider: str, command: list[str], provider: str
+) -> None:
+    try:
+        result = subprocess.run(
+            command,
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=15,
+        )
+    except (OSError, subprocess.TimeoutExpired) as error:
+        raise RuntimeError(
+            f"Could not check for running {conflicting_provider} guests: {error}"
+        ) from error
+    if result.returncode:
+        details = result.stderr.strip() or result.stdout.strip()
+        message = (
+            f"Could not check for running {conflicting_provider} guests "
+            "before starting this VM."
+        )
+        if details:
+            message += f" {details}"
+        raise RuntimeError(message)
+    if result.stdout.strip():
+        raise RuntimeError(
+            f"Stop all running {conflicting_provider} guests before starting "
+            f"a {provider} VM; VirtualBox and KVM must not run together."
+        )
 
 
 def _provision_block(name: str, script_path: Path, privileged: bool = True) -> str:

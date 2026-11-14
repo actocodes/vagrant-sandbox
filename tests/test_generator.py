@@ -1,10 +1,18 @@
+from contextlib import redirect_stderr
+from io import StringIO
 import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from vagrant_sandbox.generator import generate_project, render_vagrantfile, start_vm
-from vagrant_sandbox.settings import resolve_settings
+from vagrant_sandbox.generator import (
+    _ensure_no_conflicting_linux_guests,
+    _linux_provider,
+    generate_project,
+    render_vagrantfile,
+    start_vm,
+)
+from vagrant_sandbox.settings import default_provider, resolve_settings
 
 
 class GeneratorTests(unittest.TestCase):
@@ -22,12 +30,24 @@ class GeneratorTests(unittest.TestCase):
         self.assertIn("ssh_info = machine.ssh_info", content)
         self.assertIn('host_alias = "sandbox-#{VM_NAME}"', content)
         self.assertIn('File.expand_path("~/.ssh/config")', content)
-        self.assertIn('vagrant_sandbox_update_hosts("add")', content)
+        self.assertIn('vagrant_sandbox_update_hosts("add", address)', content)
         self.assertIn('vagrant_sandbox_update_hosts("remove")', content)
         self.assertIn('$path = Join-Path $env:SystemRoot "System32\\\\drivers\\\\etc\\\\hosts"', content)
         self.assertIn('hosts_path = "/etc/hosts"', content)
         self.assertIn("Start-Process -FilePath \"powershell.exe\" -Verb RunAs", content)
         self.assertIn('config.vm.network "private_network", ip: VM_IP', content)
+        self.assertIn('config.vm.provider "libvirt" do |libvirt|', content)
+        self.assertIn('config.vm.box_architecture = "arm64" if ARM64_HOST', content)
+        self.assertIn('libvirt.driver = "kvm"', content)
+        self.assertIn('libvirt.graphics_type = "none"', content)
+        self.assertIn('libvirt__network_name: "vagrant-sandbox"', content)
+        self.assertIn('ENV["VAGRANT_DEFAULT_PROVIDER"] ||= default_provider if default_provider', content)
+        self.assertIn('config.vm.provision "sandbox-dns"', content)
+        self.assertIn("DNSSEC=no", content)
+        self.assertIn("getent hosts mirrors.edge.kernel.org", content)
+        self.assertIn('"--usb", "off"', content)
+        self.assertIn('"--usb-autoconnect", "off"', content)
+        self.assertNotIn("@@", content)
 
     def test_generation_refuses_to_replace_without_force(self):
         settings = resolve_settings({}, {})
@@ -54,14 +74,14 @@ class GeneratorTests(unittest.TestCase):
             self.assertIn("custom-1-custom.sh", generated)
 
     def test_interactive_blank_provider_clears_configured_provider(self):
-        answers = iter(("", "", "", "", "", "", "", ""))
+        answers = iter(("", "", "", "", "", "", ""))
         settings = resolve_settings(
             {"provider": "virtualbox"},
             {},
             interactive=True,
             input_fn=lambda _prompt: next(answers),
         )
-        self.assertIsNone(settings.provider)
+        self.assertEqual(settings.provider, default_provider())
 
     def test_start_vm_passes_provider_without_shell(self):
         settings = resolve_settings({}, {"provider": "virtualbox"})
@@ -71,6 +91,42 @@ class GeneratorTests(unittest.TestCase):
             run.assert_called_once_with(
                 ["vagrant", "up", "--provider", "virtualbox"], cwd=Path("."), check=False
             )
+
+    def test_linux_uses_virtualbox_when_libvirt_is_not_ready(self):
+        warning = StringIO()
+        with redirect_stderr(warning):
+            with (
+                patch("vagrant_sandbox.generator.subprocess.run") as run,
+                patch(
+                    "vagrant_sandbox.generator.shutil.which",
+                    return_value="VBoxManage",
+                ),
+            ):
+                run.return_value.returncode = 0
+                run.return_value.stdout = ""
+                self.assertEqual(_linux_provider(), "virtualbox")
+        self.assertIn("using the VirtualBox fallback", warning.getvalue())
+
+    def test_linux_refuses_to_mix_running_hypervisors(self):
+        with (
+            patch("vagrant_sandbox.generator.shutil.which", return_value="VBoxManage"),
+            patch("vagrant_sandbox.generator.subprocess.run") as run,
+        ):
+            run.return_value.returncode = 0
+            run.return_value.stdout = '"existing-vm" {abc}\n'
+            with self.assertRaisesRegex(RuntimeError, "must not run together"):
+                _ensure_no_conflicting_linux_guests("libvirt")
+
+    def test_hyperv_requires_an_elevated_windows_shell(self):
+        settings = resolve_settings({}, {"provider": "hyperv"})
+        with (
+            patch("vagrant_sandbox.generator.os.name", "nt"),
+            patch("vagrant_sandbox.generator._is_windows_admin", return_value=False),
+            patch("vagrant_sandbox.generator.subprocess.run") as run,
+        ):
+            with self.assertRaisesRegex(RuntimeError, "elevated Administrator shell"):
+                start_vm(settings, Path("."))
+            run.assert_not_called()
 
 
 if __name__ == "__main__":

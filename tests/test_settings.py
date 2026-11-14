@@ -2,7 +2,12 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from vagrant_sandbox.settings import load_config, resolve_settings
+from vagrant_sandbox.settings import (
+    default_provider,
+    load_config,
+    provider_requires_static_ip,
+    resolve_settings,
+)
 
 
 class SettingsTests(unittest.TestCase):
@@ -39,11 +44,41 @@ class SettingsTests(unittest.TestCase):
             self.assertEqual(settings.custom_scripts, (script.resolve(),))
 
     def test_interactive_values_override_defaults(self):
-        answers = iter(("devbox", "192.168.56.22", "4", "4096", "ubuntu/jammy64", "", "base,python", ""))
+        answers = iter(
+            ("devbox", "4", "4096", "generic/ubuntu2204", "virtualbox",
+             "192.168.56.22", "base,python", "")
+        )
         settings = resolve_settings({}, {}, interactive=True, input_fn=lambda _prompt: next(answers))
         self.assertEqual(settings.vm_name, "devbox")
         self.assertEqual(settings.cpus, 4)
         self.assertEqual(settings.profiles, ("base", "python"))
+        self.assertEqual(settings.vm_ip, "192.168.56.22")
+        self.assertEqual(settings.provider, "virtualbox")
+
+    def test_provider_defaults_follow_host_platform(self):
+        self.assertEqual(default_provider("win32", "AMD64"), "hyperv")
+        self.assertEqual(default_provider("linux", "x86_64"), "libvirt")
+        self.assertEqual(default_provider("darwin", "x86_64"), "virtualbox")
+        self.assertEqual(default_provider("darwin", "arm64"), "virtualbox")
+
+    def test_dynamic_provider_does_not_prompt_for_static_ip(self):
+        answers = iter(("sandbox", "2", "2048", "generic/ubuntu2204", "hyperv", "", ""))
+        prompted = []
+        settings = resolve_settings(
+            {},
+            {},
+            interactive=True,
+            input_fn=lambda prompt: (prompted.append(prompt), next(answers))[1],
+        )
+        self.assertFalse(any("Private IPv4 address" in prompt for prompt in prompted))
+        self.assertEqual(settings.provider, "hyperv")
+        self.assertFalse(provider_requires_static_ip(settings.provider))
+
+    def test_only_static_ip_providers_require_an_ip(self):
+        settings = resolve_settings({"provider": "hyperv", "vm_ip": None}, {})
+        self.assertIsNone(settings.vm_ip)
+        with self.assertRaisesRegex(ValueError, "requires a private IPv4 address"):
+            resolve_settings({"provider": "libvirt", "vm_ip": None}, {})
 
 
 if __name__ == "__main__":

@@ -11,12 +11,15 @@ sharing your host project directory with the guest.
 - Python 3.11 or newer
 - [Vagrant](https://developer.hashicorp.com/vagrant/install) installed and available on `PATH`
 - A Vagrant version with built-in trigger support
-- A Vagrant provider installed and usable by Vagrant:
-  - VirtualBox (`virtualbox`)
-  - VMware (`vmware_desktop`)
-  - Parallels (`parallels`)
+- A usable provider for your operating system:
+  - Windows: Hyper-V; run the command from an elevated Administrator shell.
+  - Linux: vagrant-libvirt with QEMU/KVM, libvirt, and access through the `libvirt` group. VirtualBox is used as a fallback if libvirt is not ready.
+  - macOS: VirtualBox. Apple Silicon requires an arm64 box build. 
+  - VMware Desktop and Parallels remain available when explicitly selected.
 
-Vagrant and its providers are installed separately, installing this Python package does not install them. The selected box must support the provider you intend to use.
+Vagrant and its providers are installed separately, installing this Python package does not install them. On Linux, install the distribution's QEMU/KVM and libvirt packages, install the `vagrant-libvirt` Vagrant plugin, enable the libvirt service, and add your account to the `libvirt` group before logging back in. The generated default box is `generic/ubuntu2204`.
+
+On Linux, install the plugin with `vagrant plugin install vagrant-libvirt`.
 
 ## Install
 
@@ -72,7 +75,7 @@ vagrant-sandbox profiles
 | `--config FILE` | Read settings from a JSON configuration file. |
 | `--directory DIR` | Generate the project in `DIR` instead of the current directory. |
 | `--vm-name NAME` | Set the VM hostname/name. |
-| `--vm-ip ADDRESS` | Set the private host-only IPv4 address. |
+| `--vm-ip ADDRESS` | Set the static private IPv4 address (used by providers that require it). |
 | `--cpus COUNT` | Set the CPU count. |
 | `--memory MB` | Set memory in megabytes. |
 | `--box BOX` | Select a Vagrant box. |
@@ -95,7 +98,7 @@ vagrant-sandbox create --non-interactive
 # Generate files only, in another directory.
 vagrant-sandbox create --directory ../web-sandbox --no-up
 
-# Choose a provider and machine settings.
+# Choose a provider and machine settings. Static-IP providers need an address.
 vagrant-sandbox create --provider virtualbox --vm-name web-dev --vm-ip 192.168.56.21 --cpus 4 --memory 4096
 
 # Choose profiles and add two custom provisioning scripts.
@@ -108,10 +111,8 @@ vagrant-sandbox create --config sandbox.json --vm-name web-dev --provider virtua
 vagrant-sandbox create --config sandbox.json --force
 ```
 
-If you use `--no-up` with `--provider`, the provider is not saved in the
-generated `Vagrantfile`. When starting it later, select the provider explicitly,
-for example `vagrant up --provider virtualbox`, or omit the option to let
-Vagrant choose its default provider.
+The provider is passed to the initial `vagrant up` and is not saved as a provider selection in the generated `Vagrantfile`. When starting a generated project later, the Vagrantfile sets `VAGRANT_DEFAULT_PROVIDER` based on `Vagrant::Util::Platform`, you can override that choice with
+`vagrant up --provider NAME`. The CLI checks Linux libvirt prerequisites and announces when it uses the VirtualBox fallback, a later direct `vagrant up` uses the platform default and therefore requires that provider to be ready.
 
 ## Settings and configuration
 
@@ -121,9 +122,7 @@ interactive prompts:
 1. Built-in defaults are used for unspecified values.
 2. Config values override defaults.
 3. Command-line options override config values.
-4. In an interactive terminal, prompts are shown for values not explicitly set
-   on the command line. Press Enter to keep the displayed value, except a blank
-   provider clears a provider from config and lets Vagrant choose.
+4. In an interactive terminal, prompts are shown for values not explicitly set on the command line. Press Enter to keep the displayed value, entering a blank provider selects the automatic host-OS default.
 
 Use `--non-interactive` to skip prompts, which is useful in scripts and CI.
 
@@ -132,10 +131,9 @@ Example `sandbox.json`:
 ```json
 {
   "vm_name": "web-dev",
-  "vm_ip": "192.168.56.21",
   "cpus": 4,
   "memory": 4096,
-  "box": "bento/ubuntu-24.04",
+  "box": "generic/ubuntu2204",
   "provider": "virtualbox",
   "profiles": ["base", "docker", "nodejs", "python"],
   "custom_scripts": ["scripts/install-tools.sh"]
@@ -147,20 +145,16 @@ All config keys are optional. The defaults are:
 | Setting | Default |
 | --- | --- |
 | `vm_name` | `sandbox` |
-| `vm_ip` | `192.168.56.10` |
+| `vm_ip` | `192.168.56.10` (static-IP providers only) |
 | `cpus` | `2` |
 | `memory` | `2048` MB |
-| `box` | `bento/ubuntu-24.04` |
-| `provider` | Vagrant's default provider |
+| `box` | `generic/ubuntu2204` |
+| `provider` | Automatically selected for the host OS |
 | `profiles` | `["base"]` |
 | `custom_scripts` | `[]` |
 
-The VM name must be 1–63 letters, digits, hyphens, or underscores, starting
-with a letter or digit. The IP must be a private IPv4 address in `10/8`,
-`172.16/12`, or `192.168/16`; choose a distinct address for each VM on the same
-host. CPU count must be between 1 and 256, and memory between 512 and 1,048,576
-MB. The box must be a non-empty, single-line name. Provider names may contain
-letters, digits, underscores, and hyphens.
+The VM name must be 1–63 letters, digits, hyphens, or underscores, starting with a letter or digit. For providers that use a static private network
+(including libvirt and VirtualBox), the IP must be a private IPv4 address in `10/8`, `172.16/12`, or `192.168/16`, choose a distinct address for each VM on the same host. Hyper-V uses the Default Switch and obtains its address dynamically, so no IP prompt is shown. CPU count must be between 1 and 256, and memory between 512 and 1,048,576 MB. The box must be a non-empty, single-line name. Provider names may contain letters, digits, underscores, and hyphens.
 
 Config paths for `custom_scripts` are resolved relative to the JSON config
 file. Paths supplied with `--provision` or at an interactive prompt are
@@ -196,17 +190,12 @@ they can run privileged commands inside the guest.
 
 ## Provider and networking behavior
 
-The generated Vagrantfile includes configuration for VirtualBox, VMware
-Desktop, and Parallels. `--provider` passes the selected provider to the initial
-`vagrant up`, it does not rewrite the Vagrantfile. If no provider is selected,
-Vagrant chooses its default/available provider. Provider-specific options only
-apply when that provider is used.
+The provider is selected from the host OS: Hyper-V on Windows, libvirt on Linux (with VirtualBox fallback when libvirt prerequisites are unavailable), and VirtualBox on macOS (Intel and Apple Silicon). On Apple Silicon the box must have an arm64 build. VMware Desktop and Parallels remain available when explicitly selected. A provider explicitly requested by the user is never silently changed. The CLI uses an explicit provider flag, so missing or unavailable providers fail with Vagrant's provider error rather than silently switching to another hypervisor. Hyper-V startup is rejected unless the process is elevated. On Linux, the tool checks for running guests on the other hypervisor and refuses to start VirtualBox while KVM guests are running, or vice versa.
 
-The generated environment uses a private host-only network at the configured
-IP. It does not forward application ports to localhost. The project directory
-is not shared with the guest, and SSH agent and X11 forwarding are disabled.
-Clone code inside `~/workspace` in the guest rather than expecting host files
-to appear there.
+Libvirt and static-IP providers use a private network, Hyper-V uses its Default Switch with a dynamically assigned address. The generated environment does not forward application ports. Synced folders are disabled, SSH agent and X11 forwarding are disabled, clipboard and drag-and-drop are disabled, and USB device auto-connection is disabled where supported. Clone code inside `~/workspace` in the guest rather than expecting host files to appear there.
+
+All providers receive a systemd-resolved DNS configuration to avoid DNSSEC failures, followed by a provisioning smoke test that resolves
+`mirrors.edge.kernel.org`. Provisioning stops with an error if DNS is not working.
 
 After the VM starts, Vagrant adds its configured name and private IP to the
 host's hosts file so the VM can be reached by name. This requires administrator
@@ -241,8 +230,7 @@ the host and can be reused to create it again.
   `PATH`.
 - **Provider is unavailable:** install/configure the provider and ensure the
   selected box supports it.
-- **The private IP is already in use:** choose another unused private IPv4
-  address with `--vm-ip`.
+- **The private IP is already in use:** for a static-IP provider, choose another unused private IPv4 address with `--vm-ip`.
 - **A custom script is reported missing:** check the path base. Config paths
   are relative to the config file, `--provision` paths are relative to the
   command's current directory.

@@ -1,6 +1,8 @@
 import ipaddress
 import json
+import platform
 import re
+import sys
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable
@@ -11,7 +13,7 @@ DEFAULTS: dict[str, Any] = {
     "vm_ip": "192.168.56.10",  # NOSONAR
     "cpus": 2,
     "memory": 2048,
-    "box": "bento/ubuntu-24.04",
+    "box": "generic/ubuntu2204",
     "provider": None,
     "profiles": ["base"],
     "custom_scripts": [],
@@ -31,11 +33,12 @@ PRIVATE_NETWORKS = tuple(
 @dataclass(frozen=True)
 class Settings:
     vm_name: str
-    vm_ip: str
+    vm_ip: str | None
     cpus: int
     memory: int
     box: str
-    provider: str | None
+    provider: str
+    provider_auto: bool
     profiles: tuple[str, ...]
     custom_scripts: tuple[Path, ...]
 
@@ -71,6 +74,11 @@ def resolve_settings(
     input_fn: Callable[[str], str] = input,
 ) -> Settings:
     values = _merge_settings(config, cli)
+    if values["provider"] is None:
+        values["provider"] = default_provider()
+        values["provider_auto"] = True
+    else:
+        values["provider_auto"] = False
     if interactive:
         _apply_interactive_values(values, cli, input_fn)
     return validate_settings(values)
@@ -90,11 +98,11 @@ def _merge_settings(config: dict[str, Any], cli: dict[str, Any]) -> dict[str, An
 
 PROMPTS = (
     ("vm_name", "VM name"),
-    ("vm_ip", "Private IPv4 address"),
     ("cpus", "CPU cores"),
     ("memory", "Memory in MB"),
     ("box", "Vagrant box"),
-    ("provider", "Provider (blank for Vagrant default)"),
+    ("provider", "Provider"),
+    ("vm_ip", "Private IPv4 address"),
     ("profiles", "Provisioning profiles (comma-separated)"),
     ("custom_scripts", "Custom shell scripts (comma-separated paths)"),
 )
@@ -107,6 +115,8 @@ def _apply_interactive_values(
 ) -> None:
     for key, label in PROMPTS:
         if cli.get(key) is not None:
+            continue
+        if key == "vm_ip" and not provider_requires_static_ip(values["provider"]):
             continue
         answer = input_fn(f"{label} [{_display_value(key, values[key])}]: ").strip()
         _apply_prompt_answer(values, key, label, answer)
@@ -126,8 +136,11 @@ def _apply_prompt_answer(
 ) -> None:
     if not answer:
         if key == "provider":
-            values[key] = None
+            values[key] = default_provider()
+            values["provider_auto"] = True
         return
+    if key == "provider":
+        values["provider_auto"] = False
     if key in ("profiles", "custom_scripts"):
         items = [item.strip() for item in answer.split(",") if item.strip()]
         values[key] = _parse_path_items(items) if key == "custom_scripts" else items
@@ -146,21 +159,29 @@ def _parse_path_items(items: list[str]) -> list[Path]:
 
 def validate_settings(values: dict[str, Any]) -> Settings:
     vm_name = _validate_vm_name(values["vm_name"])
-    ip = _validate_vm_ip(values["vm_ip"])
+    provider = _validate_provider(values["provider"])
+    if provider is None:
+        provider = default_provider()
+    vm_ip = values["vm_ip"]
+    ip = _validate_vm_ip(vm_ip) if vm_ip is not None else None
+    if provider_requires_static_ip(provider) and ip is None:
+        raise ValueError(f"Provider '{provider}' requires a private IPv4 address.")
+    if ip is not None:
+        vm_ip = str(ip)
     cpus = _bounded_integer(values["cpus"], "CPU count", 1, 256)
     memory = _bounded_integer(values["memory"], "Memory", 512, 1_048_576)
     box = _validate_box(values["box"])
-    provider = _validate_provider(values["provider"])
     profiles = _validate_profiles(values["profiles"])
     scripts = _validate_custom_scripts(values["custom_scripts"])
 
     return Settings(
         vm_name=vm_name,
-        vm_ip=str(ip),
+        vm_ip=vm_ip,
         cpus=cpus,
         memory=memory,
         box=box,
         provider=provider,
+        provider_auto=bool(values.get("provider_auto", False)),
         profiles=profiles,
         custom_scripts=scripts,
     )
@@ -204,6 +225,25 @@ def _validate_provider(provider: Any) -> str | None:
     ):
         raise ValueError("Provider must contain only letters, digits, hyphens, or underscores.")
     return provider
+
+
+def default_provider(
+    system: str | None = None,
+    machine: str | None = None,
+) -> str:
+    system = sys.platform if system is None else system
+    machine = platform.machine().lower() if machine is None else machine.lower()
+    if system == "win32":
+        return "hyperv"
+    if system.startswith("linux"):
+        return "libvirt"
+    if system == "darwin":
+        return "virtualbox"
+    raise ValueError(f"Automatic provider selection is not supported on '{system}'.")
+
+
+def provider_requires_static_ip(provider: str) -> bool:
+    return provider.lower() != "hyperv"
 
 
 def _validate_profiles(profiles_value: Any) -> tuple[str, ...]:

@@ -3,13 +3,51 @@ require "base64"
 require "fileutils"
 require "open3"
 require "rbconfig"
+require "vagrant/util/platform"
 
 VM_NAME = @@VM_NAME@@
 VM_IP = @@VM_IP@@
 VM_CPUS = @@VM_CPUS@@
 VM_MEMORY = @@VM_MEMORY@@
 
-def vagrant_sandbox_update_hosts(action)
+def vagrant_sandbox_default_provider
+  platform = Vagrant::Util::Platform
+  return "hyperv" if platform.windows?
+  return "libvirt" if platform.linux?
+  return "virtualbox" if platform.darwin?
+
+  nil
+end
+
+default_provider = vagrant_sandbox_default_provider
+ENV["VAGRANT_DEFAULT_PROVIDER"] ||= default_provider if default_provider
+
+def vagrant_sandbox_requested_provider
+  provider_arg = ARGV.find { |arg| arg.start_with?("--provider=") }
+  return provider_arg.split("=", 2).last if provider_arg
+
+  provider_index = ARGV.index("--provider")
+  return ARGV[provider_index + 1] if provider_index && ARGV[provider_index + 1]
+
+  ENV["VAGRANT_DEFAULT_PROVIDER"]
+end
+
+def vagrant_sandbox_hyperv?
+  return true if vagrant_sandbox_requested_provider.to_s.casecmp?("hyperv")
+  File.exist?(File.join(File.dirname(__FILE__), ".vagrant", "machines", "default", "hyperv", "id"))
+end
+
+def vagrant_sandbox_libvirt?
+  return true if vagrant_sandbox_requested_provider.to_s.casecmp?("libvirt")
+  File.exist?(File.join(File.dirname(__FILE__), ".vagrant", "machines", "default", "libvirt", "id"))
+end
+
+HYPERV = vagrant_sandbox_hyperv?
+LIBVIRT = vagrant_sandbox_libvirt?
+ARM64_HOST = Vagrant::Util::Platform.darwin? &&
+  RbConfig::CONFIG["host_cpu"].match?(/arm|aarch64/i)
+
+def vagrant_sandbox_update_hosts(action, vm_ip = VM_IP)
   begin_marker = "# BEGIN vagrant-sandbox #{VM_NAME}"
   end_marker = "# END vagrant-sandbox #{VM_NAME}"
   if Gem.win_platform?
@@ -20,7 +58,7 @@ def vagrant_sandbox_update_hosts(action)
       $beginMarker = "#{begin_marker}"
       $endMarker = "#{end_marker}"
       $vmName = "#{VM_NAME}"
-      $vmIp = "#{VM_IP}"
+      $vmIp = "#{vm_ip}"
       $content = [System.IO.File]::ReadAllText($path)
       $newline = if ($content.Contains("`r`n")) { "`r`n" } else { "`n" }
       $hasBegin = $content.Contains($beginMarker)
@@ -117,7 +155,7 @@ def vagrant_sandbox_update_hosts(action)
       action,
       begin_marker,
       end_marker,
-      VM_IP,
+      vm_ip,
       VM_NAME,
     ]
   end
@@ -133,13 +171,21 @@ end
 
 Vagrant.configure("2") do |config|
   config.vm.box = @@BOX@@
+  config.vm.box_architecture = "arm64" if ARM64_HOST
   config.vm.hostname = VM_NAME
 
   # Keep project files on the host isolated from the guest.
   config.vm.synced_folder ".", "/vagrant", disabled: true
   config.ssh.forward_agent = false
   config.ssh.forward_x11 = false
-  config.vm.network "private_network", ip: VM_IP
+
+  if HYPERV
+    config.vm.network "public_network", bridge: "Default Switch"
+  elsif LIBVIRT
+    config.vm.network "private_network", ip: VM_IP, libvirt__network_name: "vagrant-sandbox"
+  else
+    config.vm.network "private_network", ip: VM_IP
+  end
 
   config.vm.provider "virtualbox" do |vb|
     vb.name = VM_NAME
@@ -148,7 +194,32 @@ Vagrant.configure("2") do |config|
     vb.linked_clone = true
     vb.customize ["modifyvm", :id, "--clipboard-mode", "disabled"]
     vb.customize ["modifyvm", :id, "--draganddrop", "disabled"]
+    vb.customize ["modifyvm", :id, "--usb", "off"]
     vb.customize ["modifyvm", :id, "--natdnshostresolver1", "on"]
+  end
+
+  config.vm.provider "hyperv" do |hv|
+    hv.vmname = VM_NAME
+    hv.cpus = VM_CPUS
+    hv.memory = VM_MEMORY
+    hv.maxmemory = VM_MEMORY
+    hv.linked_clone = true
+    hv.enable_virtualization_extensions = false
+    hv.enable_enhanced_session_mode = false
+    hv.vm_integration_services = {
+      guest_service_interface: false,
+      heartbeat: true,
+      key_value_pair_exchange: true,
+      shutdown: true,
+      time_synchronization: true,
+    }
+  end
+
+  config.vm.provider "libvirt" do |libvirt|
+    libvirt.cpus = VM_CPUS
+    libvirt.memory = VM_MEMORY
+    libvirt.driver = "kvm"
+    libvirt.graphics_type = "none"
   end
 
   config.vm.provider "vmware_desktop" do |vmware|
@@ -157,14 +228,37 @@ Vagrant.configure("2") do |config|
     vmware.vmx["isolation.tools.copy.disable"] = "TRUE"
     vmware.vmx["isolation.tools.paste.disable"] = "TRUE"
     vmware.vmx["isolation.tools.dnd.disable"] = "TRUE"
+    vmware.vmx["usb.present"] = "FALSE"
   end
 
   config.vm.provider "parallels" do |parallels|
     parallels.cpus = VM_CPUS
     parallels.memory = VM_MEMORY
+    parallels.customize ["set", :id, "--clipboard", "off"]
+    parallels.customize ["set", :id, "--dragdrop", "off"]
+    parallels.customize ["set", :id, "--usb-autoconnect", "off"]
   end
 
+  config.vm.provision "sandbox-dns", type: "shell", run: "once", inline: <<~'SHELL'
+    set -eu
+    if systemctl is-active --quiet systemd-resolved; then
+      mkdir -p /etc/systemd/resolved.conf.d
+      cat > /etc/systemd/resolved.conf.d/sandbox-dns.conf <<EOF
+    [Resolve]
+    DNS=1.1.1.1 9.9.9.9
+    FallbackDNS=8.8.8.8
+    DNSSEC=no
+    EOF
+      systemctl restart systemd-resolved
+    fi
+  SHELL
+
 @@PROVISIONERS@@
+
+  config.vm.provision "sandbox-network-smoke-test", type: "shell", inline: <<~'SHELL'
+    set -eu
+    getent hosts mirrors.edge.kernel.org
+  SHELL
 
   config.trigger.after :up, :reload do |trigger|
     trigger.name = "vagrant-sandbox SSH config"
@@ -220,8 +314,15 @@ Vagrant.configure("2") do |config|
   config.trigger.after :up, :reload do |trigger|
     trigger.name = "vagrant-sandbox host DNS"
     trigger.info = "Adding #{VM_NAME} to the host hosts file"
-    trigger.ruby do
-      vagrant_sandbox_update_hosts("add")
+    trigger.ruby do |_env, machine|
+      address = VM_IP
+      if machine.provider_name.to_s == "hyperv"
+        ssh_info = machine.ssh_info
+        raise "Vagrant did not provide the Hyper-V guest address." unless ssh_info
+
+        address = ssh_info.fetch(:host)
+      end
+      vagrant_sandbox_update_hosts("add", address)
     end
   end
 
@@ -233,8 +334,9 @@ Vagrant.configure("2") do |config|
     end
   end
 
+  location = HYPERV ? "the address Hyper-V assigned (resolves as #{VM_NAME})" : VM_IP
   config.vm.post_up_message = <<-MSG
-    Sandbox '#{VM_NAME}' is up at #{VM_IP}.
+    Sandbox '#{VM_NAME}' is up at #{location}.
     Clone repositories into ~/workspace inside the VM, host folders are not shared.
     VS Code Remote-SSH host: sandbox-#{VM_NAME}
   MSG
