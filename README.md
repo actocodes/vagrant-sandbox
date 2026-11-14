@@ -60,6 +60,8 @@ It then runs `vagrant up` unless `--no-up` is specified. After the machine is ru
 
 After `vagrant up` or `vagrant reload`, the generated Vagrantfile updates a managed `sandbox-<VM_NAME>` host block at the beginning of your user SSH config using Vagrant's current SSH connection details. To connect VS Code, install the Remote - SSH extension and connect to that host alias. For the default VM name, the alias is `sandbox-sandbox`. The trigger changes only its own marked block and preserves the rest of `~/.ssh/config`.
 
+After `vagrant destroy`, the managed SSH config block is removed along with the managed hosts-file entry. Other SSH config and hosts-file content is preserved.
+
 ## Commands
 
 ```console

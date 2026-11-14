@@ -169,6 +169,26 @@ def vagrant_sandbox_update_hosts(action, vm_ip = VM_IP)
   raise message
 end
 
+def vagrant_sandbox_remove_ssh_config
+  host_alias = "sandbox-#{VM_NAME}"
+  config_path = File.expand_path("~/.ssh/config")
+  return unless File.file?(config_path)
+
+  existing = File.read(config_path)
+  begin_marker = "# BEGIN vagrant-sandbox #{host_alias}"
+  end_marker = "# END vagrant-sandbox #{host_alias}"
+  block_pattern = /^#{Regexp.escape(begin_marker)}\r?\n.*?^#{Regexp.escape(end_marker)}\r?\n?/m
+
+  if existing.include?(begin_marker) || existing.include?(end_marker)
+    unless existing.scan(begin_marker).length == 1 &&
+        existing.scan(end_marker).length == 1 &&
+        block_pattern.match?(existing)
+      raise "The managed SSH config block for #{host_alias} is malformed."
+    end
+    File.write(config_path, existing.sub(block_pattern, ""))
+  end
+end
+
 Vagrant.configure("2") do |config|
   config.vm.box = @@BOX@@
   config.vm.box_architecture = "arm64" if ARM64_HOST
@@ -327,9 +347,10 @@ Vagrant.configure("2") do |config|
   end
 
   config.trigger.after :destroy do |trigger|
-    trigger.name = "vagrant-sandbox host DNS cleanup"
-    trigger.info = "Removing #{VM_NAME} from the host hosts file"
+    trigger.name = "vagrant-sandbox host config cleanup"
+    trigger.info = "Removing #{VM_NAME} from the host hosts and SSH config"
     trigger.ruby do
+      vagrant_sandbox_remove_ssh_config
       vagrant_sandbox_update_hosts("remove")
     end
   end
